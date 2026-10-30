@@ -345,6 +345,10 @@ object KeepIslandHook : BaseHook() {
     private fun seamlessHandoff(): Boolean =
         ConfigManager.getBoolean(PREF_KEY_SEAMLESS_HANDOFF, false)
 
+    /** 真实岛接管期间（或即将恢复的窗口内）。 */
+    private fun realIslandActive(): Boolean =
+        activeRealKeys.isNotEmpty() || restoreRunnable != null
+
     private fun activeProfileScene(): KeepIslandProfileScene = when {
         keyguardLocked && !ConfigManager.getBoolean(PREF_KEY_LOCKED_FOLLOW_DEFAULT, true) ->
             KeepIslandProfileScene.LOCKED
@@ -1346,6 +1350,15 @@ object KeepIslandHook : BaseHook() {
             if (ctx != null && defaultDisplayState(ctx) == Display.STATE_ON && posted &&
                 shouldPostKeepNotification() && hasConfiguredKeepIslandContent()
             ) {
+                // 真实岛接管期间暂停内容更新：每次更新都会触发一次岛动画，
+                // 与真实岛叠加会让「消失→重建」更明显。
+                if (realIslandActive()) {
+                    mainHandler.postDelayed(
+                        periodicDataUpdateRunnable!!,
+                        DATA_UPDATE_INTERVAL_MS,
+                    )
+                    return@Runnable
+                }
                 val alignToSecond = hasSecondTimePlaceholder()
                 updateKeepIslandContent(ctx, force = alignToSecond)
                 mainHandler.postDelayed(
