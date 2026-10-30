@@ -7,11 +7,14 @@ import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 实验：把「岛被删除时的收起动画」替换成无动画版本。
+ * 交接动画重定向。
  *
- * 背景：真实通知结束时，SystemUI 会先播 [bigIslandToDeletedAnimation] 把岛缩回去，
- * 再由常驻岛重新 `initToBigIslandAnimation` 展开，形成「缩一下再弹回」。
- * 这里把收起那一步换成对应的 `NoAnimation`，让岛瞬间消失、只保留展开动画。
+ * 两条规则：
+ * 1. 「删除」改成「临时隐藏」：岛不再被销毁，恢复时走 tempHidden 路径，比从零 init 展开快；
+ * 2. 从临时隐藏恢复时使用 `NoAnimation` 版本：岛瞬间出现，不播放「从零长大」的展开动画，
+ *    从而消除通知结束后的空白间隔。
+ *
+ * 风险：第 2 条会让恢复变成硬切，可能出现单帧闪烁；实验确认后再决定是否保留。
  */
 object IslandDeleteNoAnimHook {
 
@@ -20,16 +23,21 @@ object IslandDeleteNoAnimHook {
     private const val CONTROLLER_CLASS =
         "miui.systemui.dynamicisland.anim.DynamicIslandAnimationController"
 
-    /** 有动画方法名 -> 对应的无动画方法名。 */
+    private data class Redirect(
+        val animatedName: String,
+        val animatedArity: Int,
+        val targetName: String,
+    )
+
     /**
-     * 有动画方法名 -> 替代方法名。
-     *
-     * 实验 B：把「删除」改成「临时隐藏」。岛不被销毁，只是收起，
-     * 恢复时走 tempHiddenToXxxAnimation，比从零 init 展开快得多。
+     * 源方法参数个数不同（删除动画 1 个参数，tempHidden 恢复 2 个参数），
+     * 目标方法统一是 `(DynamicIslandContentView)` 单参数。
      */
     private val PAIRS = listOf(
-        "bigIslandToDeletedAnimation" to "bigIslandToTempHiddenAnimation",
-        "smallIslandToDeletedAnimation" to "smallIslandToTempHiddenAnimation",
+        Redirect("bigIslandToDeletedAnimation", 1, "bigIslandToTempHiddenAnimation"),
+        Redirect("smallIslandToDeletedAnimation", 1, "smallIslandToTempHiddenAnimation"),
+        Redirect("tempHiddenToBigIslandAnimation", 2, "tempHiddenToBigIslandNoAnimation"),
+        Redirect("tempHiddenToSmallIslandAnimation", 2, "tempHiddenToSmallIslandNoAnimation"),
     )
 
     private val hookedLoaders = ConcurrentHashMap.newKeySet<Int>()
@@ -42,14 +50,16 @@ object IslandDeleteNoAnimHook {
                 Class.forName(CONTROLLER_CLASS, false, classLoader)
             }.getOrNull() ?: return@hookDynamicClassLoaders
             module.logWarn(TAG, "hooked cl=$id")
-            PAIRS.forEach { (animatedName, targetName) ->
+            PAIRS.forEach { redirect ->
                 val animated = clazz.declaredMethods.firstOrNull {
-                    it.name == animatedName && it.parameterCount == 1
+                    it.name == redirect.animatedName && it.parameterCount == redirect.animatedArity
                 } ?: return@forEach
                 runCatching {
                     module.hook(animated).intercept { chain ->
                         val view = chain.args.getOrNull(0)
-                        val target = view?.let { findDelegateMethod(chain.thisObject, it, targetName) }
+                        val target = view?.let {
+                            findDelegateMethod(chain.thisObject, it, redirect.targetName)
+                        }
                         if (view == null || target == null) {
                             return@intercept chain.proceed()
                         }
@@ -57,23 +67,27 @@ object IslandDeleteNoAnimHook {
                         if (applied.isFailure) {
                             module.logWarn(
                                 TAG,
-                                "$animatedName fallback: ${applied.exceptionOrNull()?.message}",
+                                "${redirect.animatedName} fallback: " +
+                                    "${applied.exceptionOrNull()?.message}",
                             )
                             return@intercept chain.proceed()
                         }
-                        module.logWarn(TAG, "redirect $animatedName -> $targetName")
+                        module.logWarn(
+                            TAG,
+                            "redirect ${redirect.animatedName} -> ${redirect.targetName}",
+                        )
                         null
                     }
                 }.onFailure { error ->
-                    module.logWarn(TAG, "hook $animatedName failed: ${error.message}")
+                    module.logWarn(TAG, "hook ${redirect.animatedName} failed: ${error.message}")
                 }
             }
         }
     }
 
     /**
-     * 找到 delegate 上的无动画方法，并返回一个已绑定参数的调用器。
-     * Controller 的 `getAnimator(view)` 返回 [DynamicIslandAnimationDelegate]。
+     * 在 delegate 上找 `(DynamicIslandContentView)` 单参数目标方法，返回已绑定参数的调用器。
+     * Controller 的 `getAnimator(view)` 返回 `DynamicIslandAnimationDelegate`。
      */
     private fun findDelegateMethod(
         controller: Any,
