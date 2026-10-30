@@ -61,6 +61,15 @@ object KeepIslandHook : BaseHook() {
 
     private const val PREF_KEY_HIDE_LANDSCAPE = "pref_keep_island_hide_landscape"
 
+    /**
+     * 快速交接：真实岛结束后立即恢复常驻岛（0ms），而不是等 [RESTORE_DELAY_MS]。
+     *
+     * HyperOS 的超级岛是单槽位且不会自动顶替：真实岛出现时必须 dismiss 常驻岛，
+     * 否则两条岛的文本会同时渲染、叠在一起（实测确认）。因此这里只压缩恢复间隔，
+     * 不做「不 dismiss」的方案。
+     */
+    private const val PREF_KEY_SEAMLESS_HANDOFF = "pref_keep_island_seamless_handoff"
+
     private const val PREF_KEY_HIGHLIGHT_COLOR = "pref_keep_island_highlight_color"
 
     private const val PREF_KEY_LEFT_HIGHLIGHT = "pref_keep_island_left_highlight"
@@ -97,6 +106,12 @@ object KeepIslandHook : BaseHook() {
 
     private const val RESTORE_DELAY_MS = 500L
 
+    /** 无缝交接模式下真实岛结束后立即恢复，不留可感知空白。 */
+    private const val SEAMLESS_RESTORE_DELAY_MS = 0L
+
+    /** 常驻岛健康检查周期：兜底修复「通知已发出但岛永久隐藏」的卡死状态。 */
+    private const val HEALTH_CHECK_INTERVAL_MS = 10_000L
+
     private const val DATA_UPDATE_INTERVAL_MS = 1000L
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -112,6 +127,8 @@ object KeepIslandHook : BaseHook() {
     private var autoHideTrackingEnabled = false
 
     private var restoreRunnable: Runnable? = null
+
+    private var healthCheckRunnable: Runnable? = null
 
     private var periodicDataUpdateRunnable: Runnable? = null
 
@@ -185,6 +202,9 @@ object KeepIslandHook : BaseHook() {
             ) {
                 resetChargingSession()
             }
+            // 设置页主动刷新视为一次强制恢复：清掉可能残留的真实岛键，
+            // 避免 hide 事件丢失后常驻岛永久隐藏、只能重启 SystemUI。
+            activeRealKeys.clear()
             evaluateKeepIsland()
             if (posted) {
                 appContext?.let { postKeepIsland(it, restore = true) }
@@ -288,6 +308,7 @@ object KeepIslandHook : BaseHook() {
         }
         autoHideTrackingEnabled = islandEnabled && autoHide && shouldPostKeepNotification()
         if (shouldPostKeepNotification()) {
+            ensureHealthCheck()
             cancelPendingRestore()
             if (!posted) {
                 postKeepIsland(ctx, restore = true)
@@ -296,6 +317,7 @@ object KeepIslandHook : BaseHook() {
             }
         } else {
             cancelPendingRestore()
+            cancelHealthCheck()
             activeRealKeys.clear()
             if (posted) cancelKeepIsland(ctx)
         }
@@ -319,6 +341,9 @@ object KeepIslandHook : BaseHook() {
                 isLandscape(context)
         return !hideForLandscape
     }
+
+    private fun seamlessHandoff(): Boolean =
+        ConfigManager.getBoolean(PREF_KEY_SEAMLESS_HANDOFF, false)
 
     private fun activeProfileScene(): KeepIslandProfileScene = when {
         keyguardLocked && !ConfigManager.getBoolean(PREF_KEY_LOCKED_FOLLOW_DEFAULT, true) ->
@@ -1428,6 +1453,7 @@ object KeepIslandHook : BaseHook() {
             lastContentUpdateSignature = null
             cachedPanelFocusContent = null
             cancelPeriodicDataUpdate()
+            cancelHealthCheck()
             cachedModule?.let { log(it) { "keep island cancelled" } }
         } catch (e: Exception) {
             cachedModule?.let { logError(it, "keep island cancel failed: ${e.message}") }
@@ -1442,12 +1468,60 @@ object KeepIslandHook : BaseHook() {
             evaluateKeepIsland()
         }
         restoreRunnable = runnable
-        mainHandler.postDelayed(runnable, RESTORE_DELAY_MS)
+        // 无缝交接不等待：真实岛一消失就恢复常驻岛，避免可感知的空白间隔。
+        val delay = if (seamlessHandoff()) SEAMLESS_RESTORE_DELAY_MS else RESTORE_DELAY_MS
+        mainHandler.postDelayed(runnable, delay)
     }
 
     private fun cancelPendingRestore() {
         restoreRunnable?.let { mainHandler.removeCallbacks(it) }
         restoreRunnable = null
+    }
+
+    /**
+     * 常驻岛健康检查。
+     *
+     * 修复两条「岛消失后只能重启 SystemUI」的路径：
+     * 1. `posted` 已为 true 但通知在系统侧丢失时无人重建；
+     * 2. 真实岛的 hide 事件丢失后 `activeRealKeys` 残留，`shouldEnableIsland()` 永久返回 false。
+     */
+    private fun ensureHealthCheck() {
+        if (healthCheckRunnable != null) return
+        val runnable = object : Runnable {
+            override fun run() {
+                healthCheckRunnable = null
+                if (appContext == null || !shouldPostKeepNotification()) return
+                if (!posted) {
+                    diag { "health check: keep island missing, re-posting" }
+                    evaluateKeepIsland()
+                    return
+                }
+                pruneHiddenRealKeys()
+                if (healthCheckRunnable == null) {
+                    healthCheckRunnable = this
+                    mainHandler.postDelayed(this, HEALTH_CHECK_INTERVAL_MS)
+                }
+            }
+        }
+        healthCheckRunnable = runnable
+        mainHandler.postDelayed(runnable, HEALTH_CHECK_INTERVAL_MS)
+    }
+
+    private fun cancelHealthCheck() {
+        healthCheckRunnable?.let { mainHandler.removeCallbacks(it) }
+        healthCheckRunnable = null
+    }
+
+    /** 与可见性 Hook 对账，回收已经不可见却残留在集合里的真实岛键。 */
+    private fun pruneHiddenRealKeys() {
+        if (activeRealKeys.isEmpty()) return
+        val hidden = activeRealKeys.filter { key ->
+            DynamicIslandVisibilityHook.isKeyVisible(key) == false
+        }
+        if (hidden.isEmpty()) return
+        hidden.forEach { activeRealKeys.remove(it) }
+        diag { "health check: pruned hidden real island keys=$hidden" }
+        if (activeRealKeys.isEmpty()) scheduleRestore()
     }
 
     private fun registerIslandDataManager(context: Context) {

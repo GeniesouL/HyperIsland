@@ -36,6 +36,16 @@ object DynamicIslandVisibilityHook : BaseHook() {
     private val visibleKeysByView = Collections.synchronizedMap(WeakHashMap<Any, String>())
     private val visibilityByKey = ConcurrentHashMap<String, Boolean>()
 
+    /**
+     * 最近一次上报为可见的岛 key。
+     *
+     * 岛消失时 `getIslandKey()` / `getExtras()` 可能已经取不到 key（view detach、data 已清空），
+     * 原实现在这种情况下直接丢弃 hide 事件，导致上层 `activeRealKeys` 永久残留、
+     * 常驻岛再也无法恢复（只能重启 SystemUI）。用最后已知 key 兜底。
+     */
+    @Volatile
+    private var lastShownKey: String? = null
+
     @Volatile
     private var globalVisibility: Boolean? = null
 
@@ -180,6 +190,9 @@ object DynamicIslandVisibilityHook : BaseHook() {
         listeners.remove(listener)
     }
 
+    /** 该 key 最近一次记录的可见性；从未记录时返回 null。 */
+    fun isKeyVisible(key: String): Boolean? = visibilityByKey[key]
+
     private fun hookCoordinator(module: XposedModule, classLoader: ClassLoader) {
         val classLoaderId = System.identityHashCode(classLoader)
         if (!hookedCoordinatorClassLoaders.add(classLoaderId)) return
@@ -293,9 +306,12 @@ object DynamicIslandVisibilityHook : BaseHook() {
             ?: (data?.let { invokeNoArg(it, "getKey") } as? String)
             ?: sbn?.key
         val key = if (visible) {
-            currentKey?.also { visibleKeysByView[view] = it }
+            currentKey?.also {
+                visibleKeysByView[view] = it
+                lastShownKey = it
+            }
         } else {
-            visibleKeysByView.remove(view) ?: currentKey
+            visibleKeysByView.remove(view) ?: currentKey ?: lastShownKey
         } ?: return
         val event = Event(
             key = key,
@@ -328,10 +344,11 @@ object DynamicIslandVisibilityHook : BaseHook() {
             .firstOrNull()
         val extras = (data?.let { invokeNoArg(it, "getExtras") }
             ?: invokeNoArg(state, "getExtras")) as? Bundle
-        val key = (data?.let { invokeNoArg(it, "getKey") } as? String)
+        val key = ((data?.let { invokeNoArg(it, "getKey") } as? String)
             ?: extras?.getString("key")
             ?: extras?.getString("miui.notif.key")
-            ?: return
+            ?: lastShownKey) ?: return
+        if (visible) lastShownKey = key
         listeners.forEach { listener ->
             runCatching {
                 listener(

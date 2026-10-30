@@ -285,6 +285,8 @@
     <string name="keep_island_auto_hide_summary">通知到来时自动隐藏空白岛，通知消失后自动恢复</string>
     <string name="keep_island_hide_landscape">横屏时隐藏</string>
     <string name="keep_island_hide_landscape_summary">横屏时自动隐藏常驻岛，回到竖屏时恢复</string>
+    <string name="keep_island_seamless_handoff">快速交接</string>
+    <string name="keep_island_seamless_handoff_summary">通知结束后立即恢复常驻岛，不再等 500ms，减少消失后可感知的空白</string>
     <string name="keep_island_highlight_color">高亮颜色</string>
     <string name="keep_island_highlight_color_summary">自定义常驻岛的高亮文字颜色</string>
     <string name="keep_island_text_highlight">文本高亮</string>

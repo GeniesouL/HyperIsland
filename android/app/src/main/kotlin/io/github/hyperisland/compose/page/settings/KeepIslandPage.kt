@@ -219,13 +219,24 @@ internal fun KeepIslandPage(
                                 tween(LAYER_EXIT_DURATION, easing = FastOutSlowInEasing),
                             ) { it / 4 },
                 ) {
-                    PreferenceSwitch(
-                        title = stringResource(R.string.keep_island_hide_landscape),
-                        summary = stringResource(R.string.keep_island_hide_landscape_summary),
-                        icon = null,
-                        checked = settings.hideLandscape,
-                        enabled = settings.masterEnabled,
-                    ) { update(settings.copy(hideLandscape = it)) }
+                    // AnimatedVisibility 的内容 lambda 不是 ColumnScope，多个开关必须显式放进
+                    // Column，否则会叠在同一位置渲染（「横屏时隐藏 / 无缝交接」曾出现文字重叠）。
+                    Column {
+                        PreferenceSwitch(
+                            title = stringResource(R.string.keep_island_hide_landscape),
+                            summary = stringResource(R.string.keep_island_hide_landscape_summary),
+                            icon = null,
+                            checked = settings.hideLandscape,
+                            enabled = settings.masterEnabled,
+                        ) { update(settings.copy(hideLandscape = it)) }
+                        PreferenceSwitch(
+                            title = stringResource(R.string.keep_island_seamless_handoff),
+                            summary = stringResource(R.string.keep_island_seamless_handoff_summary),
+                            icon = null,
+                            checked = settings.seamlessHandoff,
+                            enabled = settings.masterEnabled,
+                        ) { update(settings.copy(seamlessHandoff = it)) }
+                    }
                 }
             }
         }

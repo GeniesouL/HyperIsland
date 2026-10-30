@@ -116,6 +116,7 @@ internal data class KeepIslandSettings(
     val masterEnabled: Boolean = true,
     val autoHide: Boolean = true,
     val hideLandscape: Boolean = false,
+    val seamlessHandoff: Boolean = false,
     val defaultProfile: KeepIslandProfile = KeepIslandProfile(),
     val chargingFollowDefault: Boolean = true,
     val chargingProfile: KeepIslandProfile = KeepIslandProfile(),
@@ -583,6 +584,7 @@ class FlutterPrefsRepository(context: Context) {
             masterEnabled = getBoolean(KEY_KEEP_ISLAND_MASTER, true),
             autoHide = getBoolean(KEY_KEEP_ISLAND_AUTO_HIDE, true),
             hideLandscape = getBoolean(KEY_KEEP_ISLAND_HIDE_LANDSCAPE, false),
+            seamlessHandoff = getBoolean(KEY_KEEP_ISLAND_SEAMLESS_HANDOFF, false),
             defaultProfile = defaultProfile,
             chargingFollowDefault = getBoolean(KEY_KEEP_ISLAND_CHARGING_FOLLOW_DEFAULT, true),
             chargingProfile = keepIslandProfile(
@@ -601,6 +603,11 @@ class FlutterPrefsRepository(context: Context) {
         putBooleanIfChanged(KEY_KEEP_ISLAND_MASTER, previous.masterEnabled, value.masterEnabled)
         putBooleanIfChanged(KEY_KEEP_ISLAND_AUTO_HIDE, previous.autoHide, value.autoHide)
         putBooleanIfChanged(KEY_KEEP_ISLAND_HIDE_LANDSCAPE, previous.hideLandscape, value.hideLandscape)
+        putBooleanIfChanged(
+            KEY_KEEP_ISLAND_SEAMLESS_HANDOFF,
+            previous.seamlessHandoff,
+            value.seamlessHandoff,
+        )
         putBooleanIfChanged(
             KEY_KEEP_ISLAND_CHARGING_FOLLOW_DEFAULT,
             previous.chargingFollowDefault,
@@ -897,6 +904,7 @@ class FlutterPrefsRepository(context: Context) {
         const val KEY_KEEP_ISLAND_SHOW_NOTIFICATION = "pref_keep_island_show_notification"
         const val KEY_KEEP_ISLAND_AUTO_HIDE = "pref_keep_island_auto_hide"
         const val KEY_KEEP_ISLAND_HIDE_LANDSCAPE = "pref_keep_island_hide_landscape"
+        const val KEY_KEEP_ISLAND_SEAMLESS_HANDOFF = "pref_keep_island_seamless_handoff"
         const val KEY_KEEP_ISLAND_HIGHLIGHT_COLOR = "pref_keep_island_highlight_color"
         const val KEY_KEEP_ISLAND_LEFT_HIGHLIGHT = "pref_keep_island_left_highlight"
         const val KEY_KEEP_ISLAND_RIGHT_HIGHLIGHT = "pref_keep_island_right_highlight"
