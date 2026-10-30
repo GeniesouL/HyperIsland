@@ -70,7 +70,12 @@ object IslandSwipeLockHook {
         }
     }
 
-    /** 记录 SwipeEventCoordinator 的滑动入口，确认滑动隐藏到底走哪条路径。 */
+    /**
+     * 在更上游的滑动入口拦截。
+     *
+     * `handleSwipe(dx, dy, ?, targets)` 的第四个参数是本次滑动影响的岛 View 列表。
+     * 只要列表里含有常驻岛，就放弃本次滑动处理，避免常驻岛被划到隐藏态。
+     */
     private fun hookSwipeCoordinator(module: XposedModule, classLoader: ClassLoader) {
         val clazz = runCatching {
             Class.forName(SWIPE_COORDINATOR_CLASS, false, classLoader)
@@ -83,8 +88,14 @@ object IslandSwipeLockHook {
             .forEach { method ->
                 runCatching {
                     module.hook(method).intercept { chain ->
-                        val args = chain.args.joinToString(", ") { it?.toString() ?: "null" }
-                        module.logWarn(TAG, "handleSwipe(${args.take(120)})")
+                        val targets = chain.args.getOrNull(3) as? Collection<*>
+                        val keepIncluded = targets?.any { target ->
+                            target != null && notificationIdOf(target) == KEEP_ISLAND_NOTIF_ID
+                        } == true
+                        if (keepIncluded) {
+                            module.logWarn(TAG, "blocked handleSwipe for keep island")
+                            return@intercept null
+                        }
                         chain.proceed()
                     }
                 }.onFailure { error ->
