@@ -1119,16 +1119,9 @@ object KeepIslandHook : BaseHook() {
     }
 
     private fun createLaunchAppIntent(context: Context): PendingIntent? {
-        val intent = context.packageManager
-            .getLaunchIntentForPackage("io.github.hyperisland")
-            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            ?: return null
-        return PendingIntent.getActivity(
-            context,
-            KEEP_ISLAND_NOTIF_ID,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        // 用户需求：点击常驻岛只展开查看，不跳转到模块。
+        // 返回 null 时系统仍然会展开岛，只是没有跳转动作。
+        return null
     }
 
     private fun samplePerformanceTrend(snapshot: IslandDataManager.PerformanceSnapshot) {

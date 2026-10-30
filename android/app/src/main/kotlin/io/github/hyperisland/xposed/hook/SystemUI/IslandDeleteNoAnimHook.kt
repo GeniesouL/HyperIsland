@@ -39,8 +39,6 @@ object IslandDeleteNoAnimHook {
     private val PAIRS = listOf(
         Redirect("bigIslandToDeletedAnimation", 1, "bigIslandToTempHiddenAnimation"),
         Redirect("smallIslandToDeletedAnimation", 1, "smallIslandToTempHiddenAnimation"),
-        Redirect("tempHiddenToBigIslandAnimation", 2, "tempHiddenToBigIslandNoAnimation"),
-        Redirect("tempHiddenToSmallIslandAnimation", 2, "tempHiddenToSmallIslandNoAnimation"),
     )
 
     private val hookedLoaders = ConcurrentHashMap.newKeySet<Int>()
