@@ -108,7 +108,8 @@ class HyperIslandModule : XposedModule() {
                 IslandBackgroundHook.init(this, param)
                 IslandBlurHook.init(this, param)
                 IslandTransitionVisualHook.init(this, param)
-                IslandAnimationDiagHook.init(this, param)
+                // 诊断 hook 仅在排查动画问题时启用；正式包关闭以避免额外开销。
+                // IslandAnimationDiagHook.init(this, param)
                 IslandDeleteNoAnimHook.init(this, param)
                 ExpandedCollapseAnimationHook.init(this, param)
                 ExpandedLivelyAnimationHook.init(this, param)

@@ -1475,15 +1475,20 @@ object KeepIslandHook : BaseHook() {
 
     private fun scheduleRestore() {
         cancelPendingRestore()
+        // 快速交接：同帧同步恢复，省掉一次 Handler 调度（约一帧 16ms）。
+        // 空白间隔已经压到只受系统动画时长影响。
+        if (seamlessHandoff()) {
+            if (activeRealKeys.isNotEmpty()) return
+            evaluateKeepIsland()
+            return
+        }
         val runnable = Runnable {
             restoreRunnable = null
             if (activeRealKeys.isNotEmpty()) return@Runnable
             evaluateKeepIsland()
         }
         restoreRunnable = runnable
-        // 无缝交接不等待：真实岛一消失就恢复常驻岛，避免可感知的空白间隔。
-        val delay = if (seamlessHandoff()) SEAMLESS_RESTORE_DELAY_MS else RESTORE_DELAY_MS
-        mainHandler.postDelayed(runnable, delay)
+        mainHandler.postDelayed(runnable, RESTORE_DELAY_MS)
     }
 
     private fun cancelPendingRestore() {
