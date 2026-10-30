@@ -3,6 +3,7 @@ package io.github.hyperisland.xposed.hook.SystemUI
 import android.os.SystemClock
 import io.github.hyperisland.xposed.logError
 import io.github.hyperisland.xposed.logWarn
+import io.github.hyperisland.xposed.utils.HookUtils
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
 import java.lang.reflect.Modifier
@@ -42,14 +43,24 @@ object IslandAnimationDiagHook {
     private val hookedClassLoaders = ConcurrentHashMap.newKeySet<Int>()
 
     fun init(module: XposedModule, param: PackageLoadedParam) {
-        val classLoader = param.defaultClassLoader
-        val id = System.identityHashCode(classLoader)
-        if (!hookedClassLoaders.add(id)) return
-        module.logWarn(TAG, "init cl=$id")
-
-        dumpAndHook(module, classLoader, CONTROLLER_CLASS)
-        ANIMATOR_CLASSES.forEach { dumpAndHook(module, classLoader, it) }
-        hookStateTransition(module, classLoader)
+        // SystemUI 的超级岛类由 MIUI 插件的动态 ClassLoader 加载，不在 defaultClassLoader 里。
+        // 与 IslandTransitionVisualHook / DynamicIslandVisibilityHook 保持一致，走动态 loader 回调。
+        HookUtils.hookDynamicClassLoaders(module, ClassLoader.getSystemClassLoader()) { classLoader ->
+            val id = System.identityHashCode(classLoader)
+            if (!hookedClassLoaders.add(id)) return@hookDynamicClassLoaders
+            module.logWarn(TAG, "init dynamic cl=$id")
+            dumpAndHook(module, classLoader, CONTROLLER_CLASS)
+            ANIMATOR_CLASSES.forEach { dumpAndHook(module, classLoader, it) }
+            hookStateTransition(module, classLoader)
+        }
+        val defaultLoader = param.defaultClassLoader
+        val defaultId = System.identityHashCode(defaultLoader)
+        if (hookedClassLoaders.add(defaultId)) {
+            module.logWarn(TAG, "init default cl=$defaultId")
+            dumpAndHook(module, defaultLoader, CONTROLLER_CLASS)
+            ANIMATOR_CLASSES.forEach { dumpAndHook(module, defaultLoader, it) }
+            hookStateTransition(module, defaultLoader)
+        }
     }
 
     private fun dumpAndHook(module: XposedModule, classLoader: ClassLoader, className: String) {
