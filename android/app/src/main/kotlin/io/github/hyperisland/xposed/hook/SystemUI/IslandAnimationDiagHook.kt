@@ -45,7 +45,7 @@ object IslandAnimationDiagHook {
         val classLoader = param.defaultClassLoader
         val id = System.identityHashCode(classLoader)
         if (!hookedClassLoaders.add(id)) return
-        log(module) { "$TAG init cl=$id" }
+        module.log { "$TAG init cl=$id" }
 
         dumpAndHook(module, classLoader, CONTROLLER_CLASS)
         ANIMATOR_CLASSES.forEach { dumpAndHook(module, classLoader, it) }
@@ -55,12 +55,12 @@ object IslandAnimationDiagHook {
     private fun dumpAndHook(module: XposedModule, classLoader: ClassLoader, className: String) {
         val clazz = runCatching { Class.forName(className, false, classLoader) }.getOrNull()
         if (clazz == null) {
-            log(module) { "$TAG class not found: $className" }
+            module.log { "$TAG class not found: $className" }
             return
         }
-        log(module) { "$TAG ===== $className (methods=${clazz.declaredMethods.size}, ctors=${clazz.declaredConstructors.size}) =====" }
+        module.log { "$TAG ===== $className (methods=${clazz.declaredMethods.size}, ctors=${clazz.declaredConstructors.size}) =====" }
         clazz.declaredConstructors.forEach { ctor ->
-            log(module) {
+            module.log {
                 "$TAG   <init>(${ctor.parameterTypes.joinToString(",") { it.simpleName }})"
             }
         }
@@ -69,7 +69,7 @@ object IslandAnimationDiagHook {
                 Modifier.isStatic(method.modifiers) -> "static "
                 else -> ""
             }
-            log(module) {
+            module.log {
                 "$TAG   $mods${method.name}(${method.parameterTypes.joinToString(",") { it.simpleName }})" +
                     " -> ${method.returnType.simpleName}"
             }
@@ -87,7 +87,7 @@ object IslandAnimationDiagHook {
                         val args = chain.args.joinToString(", ") { arg ->
                             arg?.toString()?.take(48) ?: "null"
                         }
-                        log(module) {
+                        module.log {
                             "$TAG CALL t=$endedAt ${method.name}($args)" +
                                 " cost=${endedAt - startedAt}ms"
                         }
@@ -95,7 +95,7 @@ object IslandAnimationDiagHook {
                     result
                 }
             }.onFailure { error ->
-                logError(module, "$TAG hook failed ${method.name}: ${error.message}")
+                module.logError("$TAG hook failed ${method.name}: ${error.message}")
             }
         }
     }
@@ -104,7 +104,7 @@ object IslandAnimationDiagHook {
         val clazz = runCatching {
             Class.forName(COORDINATOR_CLASS, false, classLoader)
         }.getOrNull() ?: run {
-            log(module) { "$TAG coordinator not found" }
+            module.log { "$TAG coordinator not found" }
             return
         }
         clazz.declaredMethods
@@ -114,11 +114,11 @@ object IslandAnimationDiagHook {
                     module.hook(method).intercept { chain ->
                         val transition = chain.args.getOrNull(0)?.toString()
                         val now = SystemClock.uptimeMillis()
-                        log(module) { "$TAG STATE t=$now transition=$transition" }
+                        module.log { "$TAG STATE t=$now transition=$transition" }
                         chain.proceed()
                     }
                 }.onFailure { error ->
-                    logError(module, "$TAG state hook failed: ${error.message}")
+                    module.logError("$TAG state hook failed: ${error.message}")
                 }
             }
     }
