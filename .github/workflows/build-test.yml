@@ -1,0 +1,49 @@
+name: Build Test APK
+
+# 测试构建：不发布、不读取签名 secrets，产物用 debug 签名。
+# 适用于验证未合并的修复（常驻岛消失 / 无缝交接）。
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: '构建备注（可选）'
+        required: false
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Java
+        uses: actions/setup-java@v4.3.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4.1.0
+        with:
+          gradle-version: wrapper
+
+      # releaseFast：跳过 R8 / 资源压缩，构建快，便于真机验证。
+      # 不设置 KEYSTORE_PATH，构建脚本会自动回退到 debug 签名。
+      - name: Build releaseFast
+        run: |
+          bash android/gradlew -p android :app:assembleReleaseFast --stacktrace
+
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          find . -path '*/outputs/apk/releaseFast/*.apk' -exec cp {} out/ \;
+          ls -lh out/
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: HyperIsland-test
+          path: out/*.apk
+          retention-days: 14
+          compression-level: 0
