@@ -1,7 +1,7 @@
 name: Build Test APK
 
-# 测试构建：不发布、不读取签名 secrets，产物用 debug 签名。
-# 适用于验证未合并的修复（常驻岛消失 / 无缝交接）。
+# 测试构建：不发布正式版、不读取签名 secrets，产物用 debug 签名。
+# 产物同时上传为 artifact 和 Release 附件（artifact 出口有配额限制，Release 更可靠）。
 on:
   workflow_dispatch:
     inputs:
@@ -9,6 +9,9 @@ on:
         description: '构建备注（可选）'
         required: false
         type: string
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -40,10 +43,22 @@ jobs:
           find . -path '*/outputs/apk/releaseFast/*.apk' -exec cp {} out/ \;
           ls -lh out/
 
-      - name: Upload APK
+      - name: Upload APK as artifact
         uses: actions/upload-artifact@v4.6.0
         with:
           name: HyperIsland-test
           path: out/*.apk
           retention-days: 14
           compression-level: 0
+
+      # Release 附件下载通道不受 artifact egress 配额影响，也方便手动下载。
+      - name: Publish APK to Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          gh release delete test-build --yes --cleanup-tag || true
+          gh release create test-build out/*.apk \
+            --title "Test Build" \
+            --notes "Automated test build from ${GITHUB_SHA}"
+          gh release view test-build --json assets --jq '.assets[] | "\(.name) \(.size) bytes"'

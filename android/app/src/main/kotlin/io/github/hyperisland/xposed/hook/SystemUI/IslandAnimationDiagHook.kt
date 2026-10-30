@@ -1,0 +1,125 @@
+package io.github.hyperisland.xposed.hook.SystemUI
+
+import android.os.SystemClock
+import io.github.hyperisland.xposed.log
+import io.github.hyperisland.xposed.logError
+import io.github.libxposed.api.XposedModule
+import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
+import java.lang.reflect.Modifier
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * 临时诊断 Hook（仅用于定位「常驻岛消失再重建」的动画阶段）。
+ *
+ * 输出内容：
+ * 1. 每个相关类的完整方法/构造器签名（只打一次）；
+ * 2. 这些方法被调用时的参数摘要、耗时、时间戳（按方法名限流，避免动画帧刷屏）；
+ * 3. 岛状态机 `onStateChange` 的 transition 值。
+ *
+ * 日志统一走 LSPosed 日志，复现一次后从 LSPosed 管理器导出即可。
+ */
+object IslandAnimationDiagHook {
+
+    private const val TAG = "HyperIsland[AnimDiag]"
+
+    private const val CONTROLLER_CLASS =
+        "miui.systemui.dynamicisland.anim.DynamicIslandAnimationController"
+
+    private const val COORDINATOR_CLASS =
+        "miui.systemui.dynamicisland.event.DynamicIslandEventCoordinator"
+
+    private val ANIMATOR_CLASSES = listOf(
+        "miui.systemui.dynamicisland.anim.ui.animator.FakeViewAnimator",
+        "miui.systemui.dynamicisland.anim.p110ui.animator.FakeViewAnimator",
+        "miui.systemui.dynamicisland.anim.p120ui.animator.FakeViewAnimator",
+    )
+
+    /** 同一签名在 [THROTTLE_MS] 内只输出一次，避免动画帧把日志刷爆。 */
+    private const val THROTTLE_MS = 120L
+
+    private val lastLoggedAt = ConcurrentHashMap<String, Long>()
+
+    private val hookedClassLoaders = ConcurrentHashMap.newKeySet<Int>()
+
+    fun init(module: XposedModule, param: PackageLoadedParam) {
+        val classLoader = param.defaultClassLoader
+        val id = System.identityHashCode(classLoader)
+        if (!hookedClassLoaders.add(id)) return
+        log(module) { "$TAG init cl=$id" }
+
+        dumpAndHook(module, classLoader, CONTROLLER_CLASS)
+        ANIMATOR_CLASSES.forEach { dumpAndHook(module, classLoader, it) }
+        hookStateTransition(module, classLoader)
+    }
+
+    private fun dumpAndHook(module: XposedModule, classLoader: ClassLoader, className: String) {
+        val clazz = runCatching { Class.forName(className, false, classLoader) }.getOrNull()
+        if (clazz == null) {
+            log(module) { "$TAG class not found: $className" }
+            return
+        }
+        log(module) { "$TAG ===== $className (methods=${clazz.declaredMethods.size}, ctors=${clazz.declaredConstructors.size}) =====" }
+        clazz.declaredConstructors.forEach { ctor ->
+            log(module) {
+                "$TAG   <init>(${ctor.parameterTypes.joinToString(",") { it.simpleName }})"
+            }
+        }
+        clazz.declaredMethods.forEach { method ->
+            val mods = when {
+                Modifier.isStatic(method.modifiers) -> "static "
+                else -> ""
+            }
+            log(module) {
+                "$TAG   $mods${method.name}(${method.parameterTypes.joinToString(",") { it.simpleName }})" +
+                    " -> ${method.returnType.simpleName}"
+            }
+        }
+        clazz.declaredMethods.forEach { method ->
+            runCatching {
+                module.hook(method).intercept { chain ->
+                    val startedAt = SystemClock.uptimeMillis()
+                    val result = chain.proceed()
+                    val endedAt = SystemClock.uptimeMillis()
+                    val signature = "$className#${method.name}"
+                    val last = lastLoggedAt[signature] ?: 0L
+                    if (endedAt - last >= THROTTLE_MS) {
+                        lastLoggedAt[signature] = endedAt
+                        val args = chain.args.joinToString(", ") { arg ->
+                            arg?.toString()?.take(48) ?: "null"
+                        }
+                        log(module) {
+                            "$TAG CALL t=$endedAt ${method.name}($args)" +
+                                " cost=${endedAt - startedAt}ms"
+                        }
+                    }
+                    result
+                }
+            }.onFailure { error ->
+                logError(module, "$TAG hook failed ${method.name}: ${error.message}")
+            }
+        }
+    }
+
+    private fun hookStateTransition(module: XposedModule, classLoader: ClassLoader) {
+        val clazz = runCatching {
+            Class.forName(COORDINATOR_CLASS, false, classLoader)
+        }.getOrNull() ?: run {
+            log(module) { "$TAG coordinator not found" }
+            return
+        }
+        clazz.declaredMethods
+            .filter { it.name == "onStateChange" }
+            .forEach { method ->
+                runCatching {
+                    module.hook(method).intercept { chain ->
+                        val transition = chain.args.getOrNull(0)?.toString()
+                        val now = SystemClock.uptimeMillis()
+                        log(module) { "$TAG STATE t=$now transition=$transition" }
+                        chain.proceed()
+                    }
+                }.onFailure { error ->
+                    logError(module, "$TAG state hook failed: ${error.message}")
+                }
+            }
+    }
+}
