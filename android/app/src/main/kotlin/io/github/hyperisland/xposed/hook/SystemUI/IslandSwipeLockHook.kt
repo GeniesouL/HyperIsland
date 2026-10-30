@@ -19,6 +19,9 @@ object IslandSwipeLockHook {
     private const val DELEGATE_CLASS =
         "miui.systemui.dynamicisland.anim.DynamicIslandAnimationDelegate"
 
+    private const val SWIPE_COORDINATOR_CLASS =
+        "miui.systemui.dynamicisland.event.SwipeEventCoordinator"
+
     /** 与 KeepIslandHook.KEEP_ISLAND_NOTIF_ID 保持一致（0x4B494B49）。 */
     private const val KEEP_ISLAND_NOTIF_ID = 0x4B494B49
 
@@ -36,15 +39,24 @@ object IslandSwipeLockHook {
             if (!hookedLoaders.add(id)) return@hookDynamicClassLoaders
             val clazz = runCatching {
                 Class.forName(DELEGATE_CLASS, false, classLoader)
-            }.getOrNull() ?: return@hookDynamicClassLoaders
+            }.getOrNull() ?: run {
+                module.logWarn(TAG, "delegate class not found")
+                return@hookDynamicClassLoaders
+            }
+            module.logWarn(TAG, "hooked delegate cl=$id")
             SWIPE_HIDE_METHODS.forEach { name ->
                 val method = clazz.declaredMethods.firstOrNull {
                     it.name == name && it.parameterCount >= 1
-                } ?: return@forEach
+                } ?: run {
+                    module.logWarn(TAG, "method not found: $name")
+                    return@forEach
+                }
                 runCatching {
                     module.hook(method).intercept { chain ->
                         val view = chain.args.getOrNull(0)
-                        if (view == null || notificationIdOf(view) != KEEP_ISLAND_NOTIF_ID) {
+                        val notifId = view?.let { notificationIdOf(it) }
+                        module.logWarn(TAG, "$name called notifId=$notifId")
+                        if (view == null || notifId != KEEP_ISLAND_NOTIF_ID) {
                             return@intercept chain.proceed()
                         }
                         module.logWarn(TAG, "blocked $name for keep island")
@@ -54,7 +66,31 @@ object IslandSwipeLockHook {
                     module.logWarn(TAG, "hook $name failed: ${error.message}")
                 }
             }
+            hookSwipeCoordinator(module, classLoader)
         }
+    }
+
+    /** 记录 SwipeEventCoordinator 的滑动入口，确认滑动隐藏到底走哪条路径。 */
+    private fun hookSwipeCoordinator(module: XposedModule, classLoader: ClassLoader) {
+        val clazz = runCatching {
+            Class.forName(SWIPE_COORDINATOR_CLASS, false, classLoader)
+        }.getOrNull() ?: run {
+            module.logWarn(TAG, "swipe coordinator not found")
+            return
+        }
+        clazz.declaredMethods
+            .filter { it.name == "handleSwipe" }
+            .forEach { method ->
+                runCatching {
+                    module.hook(method).intercept { chain ->
+                        val args = chain.args.joinToString(", ") { it?.toString() ?: "null" }
+                        module.logWarn(TAG, "handleSwipe(${args.take(120)})")
+                        chain.proceed()
+                    }
+                }.onFailure { error ->
+                    module.logWarn(TAG, "hook handleSwipe failed: ${error.message}")
+                }
+            }
     }
 
     /**
