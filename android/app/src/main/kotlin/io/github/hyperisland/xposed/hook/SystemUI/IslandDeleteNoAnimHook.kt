@@ -33,16 +33,14 @@ object IslandDeleteNoAnimHook {
      * 源方法参数个数不同（删除动画 1 个参数，tempHidden 恢复 2 个参数），
      * 目标方法统一是 `(DynamicIslandContentView)` 单参数。
      *
-     * 常驻岛恢复实际走的是 `initToBigIslandAnimation`（岛被当成从零初始化），
-     * 它没有 NoAnimation 版本，因此重定向到 `bigIslandChangedNoAnimation`：
-     * 无动画地把大岛直接渲染到位。
+     * 注意：不要把 `initToBigIslandAnimation` 重定向到 `bigIslandChangedNoAnimation`——
+     * 实测那样不会推进状态机（Init → BigIsland），岛会直接消失。
      */
     private val PAIRS = listOf(
         Redirect("bigIslandToDeletedAnimation", 1, "bigIslandToTempHiddenAnimation"),
         Redirect("smallIslandToDeletedAnimation", 1, "smallIslandToTempHiddenAnimation"),
         Redirect("tempHiddenToBigIslandAnimation", 2, "tempHiddenToBigIslandNoAnimation"),
         Redirect("tempHiddenToSmallIslandAnimation", 2, "tempHiddenToSmallIslandNoAnimation"),
-        Redirect("initToBigIslandAnimation", 1, "bigIslandChangedNoAnimation"),
     )
 
     private val hookedLoaders = ConcurrentHashMap.newKeySet<Int>()
