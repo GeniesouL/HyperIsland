@@ -21,9 +21,15 @@ object IslandDeleteNoAnimHook {
         "miui.systemui.dynamicisland.anim.DynamicIslandAnimationController"
 
     /** 有动画方法名 -> 对应的无动画方法名。 */
+    /**
+     * 有动画方法名 -> 替代方法名。
+     *
+     * 实验 B：把「删除」改成「临时隐藏」。岛不被销毁，只是收起，
+     * 恢复时走 tempHiddenToXxxAnimation，比从零 init 展开快得多。
+     */
     private val PAIRS = listOf(
-        "bigIslandToDeletedAnimation" to "bigIslandToDeletedNoAnimation",
-        "smallIslandToDeletedAnimation" to "smallIslandToDeletedNoAnimation",
+        "bigIslandToDeletedAnimation" to "bigIslandToTempHiddenAnimation",
+        "smallIslandToDeletedAnimation" to "smallIslandToTempHiddenAnimation",
     )
 
     private val hookedLoaders = ConcurrentHashMap.newKeySet<Int>()
@@ -36,18 +42,18 @@ object IslandDeleteNoAnimHook {
                 Class.forName(CONTROLLER_CLASS, false, classLoader)
             }.getOrNull() ?: return@hookDynamicClassLoaders
             module.logWarn(TAG, "hooked cl=$id")
-            PAIRS.forEach { (animatedName, noAnimName) ->
+            PAIRS.forEach { (animatedName, targetName) ->
                 val animated = clazz.declaredMethods.firstOrNull {
                     it.name == animatedName && it.parameterCount == 1
                 } ?: return@forEach
                 runCatching {
                     module.hook(animated).intercept { chain ->
                         val view = chain.args.getOrNull(0)
-                        val noAnim = view?.let { findDelegateNoAnimation(chain.thisObject, it, noAnimName) }
-                        if (view == null || noAnim == null) {
+                        val target = view?.let { findDelegateMethod(chain.thisObject, it, targetName) }
+                        if (view == null || target == null) {
                             return@intercept chain.proceed()
                         }
-                        val applied = runCatching { noAnim.invoke() }
+                        val applied = runCatching { target.invoke() }
                         if (applied.isFailure) {
                             module.logWarn(
                                 TAG,
@@ -55,7 +61,7 @@ object IslandDeleteNoAnimHook {
                             )
                             return@intercept chain.proceed()
                         }
-                        module.logWarn(TAG, "skip $animatedName (instant)")
+                        module.logWarn(TAG, "redirect $animatedName -> $targetName")
                         null
                     }
                 }.onFailure { error ->
@@ -69,16 +75,16 @@ object IslandDeleteNoAnimHook {
      * 找到 delegate 上的无动画方法，并返回一个已绑定参数的调用器。
      * Controller 的 `getAnimator(view)` 返回 [DynamicIslandAnimationDelegate]。
      */
-    private fun findDelegateNoAnimation(
+    private fun findDelegateMethod(
         controller: Any,
         view: Any,
-        noAnimName: String,
+        targetName: String,
     ): (() -> Any?)? {
         val delegate = invokeDeclared(controller, "getAnimator", view) ?: return null
         var clazz: Class<*>? = delegate.javaClass
         while (clazz != null) {
             val method = clazz.declaredMethods.firstOrNull {
-                it.name == noAnimName && it.parameterCount == 1
+                it.name == targetName && it.parameterCount == 1
             }
             if (method != null) {
                 method.isAccessible = true
